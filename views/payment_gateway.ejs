@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Secure Payment</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; }
+        button { padding: 15px 30px; font-size: 16px; margin: 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Payment Gateway (Simulation)</h1>
+    <h3>You are paying: $<%= amount %></h3>
+    <p>Select an outcome to simulate:</p>
+
+    <form action="/payment-callback" method="POST">
+        <input type="hidden" name="donationId" value="<%= donationId %>">
+        
+        <button name="status" value="success" style="background: green; color: white;">
+            ✅ Simulate Success
+        </button>
+        
+        <button name="status" value="failed" style="background: red; color: white;">
+            ❌ Simulate Failure
+        </button>
+    </form>
+</body>
+</html>

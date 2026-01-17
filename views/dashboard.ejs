@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>User Dashboard</title>
+    <style>
+        body { font-family: sans-serif; background-color: #121212; color: #e0e0e0; padding: 40px; }
+        
+        /* Updated Header Styles */
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+        h1 { color: #ff4d4d; margin: 0; }
+        
+        /* Button Group Container */
+        .nav-buttons { display: flex; gap: 10px; }
+
+        .logout-btn { background-color: #b00020; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; border: 1px solid #ff1744; }
+        .logout-btn:hover { background-color: #ff1744; }
+
+        .settings-btn { background-color: #333; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; border: 1px solid #555; }
+        .settings-btn:hover { background-color: #444; border-color: #777; }
+        
+        .card { background: #1e1e1e; padding: 25px; border-radius: 10px; margin-bottom: 30px; border: 1px solid #333; }
+        input[type="number"] { padding: 10px; width: 200px; background: #2c2c2c; border: 1px solid #444; color: white; border-radius: 4px; }
+        button { padding: 10px 25px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-left: 10px; }
+        button:hover { background: #218838; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th { background-color: #333; color: #ff4d4d; padding: 12px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #333; vertical-align: middle; }
+        
+        /* Status Colors */
+        .success { color: #00e676; font-weight: bold; }
+        .failed { color: #ff1744; font-weight: bold; }
+        .pending { color: #ffab00; font-weight: bold; }
+
+        /* NEW: Receipt Button Style */
+        .receipt-btn {
+            background-color: transparent;
+            color: #00e676;
+            border: 1px solid #00e676;
+            padding: 5px 12px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: 0.3s;
+        }
+        .receipt-btn:hover {
+            background-color: #00e676;
+            color: #121212;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Hello, <%= user.name %></h1>
+            <small style="color: #888;"><%= user.email %></small>
+        </div>
+        
+        <div class="nav-buttons">
+            <a href="/settings" class="settings-btn">⚙️ Settings</a>
+            <a href="/logout" class="logout-btn">❌ LOGOUT</a>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="margin-top: 0;">💙 Make a Donation</h3>
+        <form action="/donate" method="POST">
+            <label>I want to donate: $ </label>
+            <input type="number" name="amount" placeholder="Amount" required min="1">
+            <button type="submit">Proceed to Pay</button>
+        </form>
+    </div>
+
+    <h3>📜 Your Donation History</h3>
+    <table>
+        <tr>
+            <th>Date</th>
+            <th>Amount</th>
+            <th>Status</th>
+            <th>Action</th> </tr>
+        <% if (donations.length > 0) { %>
+            <% donations.forEach(donation => { %>
+                <tr>
+                    <td><%= donation.date.toDateString() %></td>
+                    <td>$<%= donation.amount %></td>
+                    
+                    <td class="<%= donation.status %>">
+                        <%= donation.status.toUpperCase() %>
+                    </td>
+
+                    <td>
+                        <% if (donation.status === 'success') { %>
+                            <a href="/receipt/<%= donation._id %>" class="receipt-btn">📥 Receipt</a>
+                        <% } else { %>
+                            <span style="color: #555;">-</span>
+                        <% } %>
+                    </td>
+                </tr>
+            <% }) %>
+        <% } else { %>
+            <tr>
+                <td colspan="4" style="text-align: center; color: #888; padding: 20px;">
+                    No donations found yet. Make your first donation above!
+                </td>
+            </tr>
+        <% } %>
+    </table>
+</body>
+</html>
