@@ -48,6 +48,11 @@
         td { padding: 15px; border-bottom: 1px solid #333; }
         tr:hover { background-color: #252525; }
         h3 { color: #888; margin-top: 0; }
+
+        /* Status Colors */
+        .status-success { color: #00e676; }
+        .status-failed { color: #ff1744; }
+        .status-pending { color: #ffab00; }
     </style>
 </head>
 <body>
@@ -84,9 +89,10 @@
             <% } %>
         </div>
     </div>
+    
     <div class="stats-box">
         <div class="stat-card">
-            <div class="stat-number">$<%= totalDonations %></div>
+            <div class="stat-number">Rs. <%= totalDonations %></div>
             <div class="stat-label">Total Funds Raised</div>
         </div>
         <div class="stat-card">
@@ -167,30 +173,41 @@
             <th>Status</th>
             <th>Date</th>
         </tr>
-        <% donations.forEach(d => { %>
+        <% donations.forEach(d => { 
+            let statusClass = 'status-pending';
+            if (d.status === 'success') statusClass = 'status-success';
+            if (d.status === 'failed') statusClass = 'status-failed';
+        %>
             <tr>
                 <td><%= d.userId ? d.userId.name : 'Unknown' %></td>
-                <td>$<%= d.amount %></td>
-                <td style="color: <%= d.status === 'success' ? '#00e676' : (d.status === 'failed' ? '#ff1744' : '#ffab00') %>">
+                <td>Rs. <%= d.amount %></td>
+                
+                <td class="<%= statusClass %>">
                     <%= d.status.toUpperCase() %>
                 </td>
+                
                 <td><%= d.date.toDateString() %></td>
             </tr>
         <% }) %>
     </table>
 
-    <script>
-        // Data passed from Server
-        const data7 = <%- JSON.stringify(chartData.days7) %>;
-        const data30 = <%- JSON.stringify(chartData.days30) %>;
+    <script id="data-7days" type="application/json"><%- JSON.stringify(chartData.days7) %></script>
+    <script id="data-30days" type="application/json"><%- JSON.stringify(chartData.days30) %></script>
 
-        // 1. Chart: Last 7 Days (Bar Chart)
+    <script>
+        const raw7 = document.getElementById('data-7days').textContent;
+        const raw30 = document.getElementById('data-30days').textContent;
+
+        const data7 = JSON.parse(raw7);
+        const data30 = JSON.parse(raw30);
+
         new Chart(document.getElementById('chart7Days'), {
             type: 'bar',
             data: {
                 labels: data7.labels,
                 datasets: [{
-                    label: 'Donations ($)',
+                    // UPDATED: Label
+                    label: 'Donations (Rs.)',
                     data: data7.data,
                     backgroundColor: '#ff4d4d',
                     borderRadius: 5
@@ -206,7 +223,6 @@
             }
         });
 
-        // 2. Chart: Last 30 Days (Line Chart)
         new Chart(document.getElementById('chart30Days'), {
             type: 'line',
             data: {
@@ -230,7 +246,6 @@
             }
         });
 
-        // Auto-refresh page every 30 seconds to fetch new notifications
         setTimeout(() => {
             window.location.reload();
         }, 30000);

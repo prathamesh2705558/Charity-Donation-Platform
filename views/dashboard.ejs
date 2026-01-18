@@ -2,6 +2,8 @@
 <html>
 <head>
     <title>User Dashboard</title>
+    <script type="text/javascript" src="https://www.payhere.lk/lib/payhere.js"></script>
+
     <style>
         body { font-family: sans-serif; background-color: #121212; color: #e0e0e0; padding: 40px; }
         
@@ -19,8 +21,8 @@
         .settings-btn:hover { background-color: #444; border-color: #777; }
         
         .card { background: #1e1e1e; padding: 25px; border-radius: 10px; margin-bottom: 30px; border: 1px solid #333; }
-        input[type="number"] { padding: 10px; width: 200px; background: #2c2c2c; border: 1px solid #444; color: white; border-radius: 4px; }
-        button { padding: 10px 25px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-left: 10px; }
+        input[type="number"] { padding: 10px; width: 200px; background: #2c2c2c; border: 1px solid #444; color: white; border-radius: 4px; font-size: 16px; }
+        button { padding: 10px 25px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-left: 10px; transition: 0.3s; }
         button:hover { background: #218838; }
 
         table { width: 100%; border-collapse: collapse; margin-top: 15px; }
@@ -65,11 +67,12 @@
 
     <div class="card">
         <h3 style="margin-top: 0;">💙 Make a Donation</h3>
-        <form action="/donate" method="POST">
-            <label>I want to donate: $ </label>
-            <input type="number" name="amount" placeholder="Amount" required min="1">
-            <button type="submit">Proceed to Pay</button>
-        </form>
+        
+        <div>
+            <label>I want to donate: Rs. </label>
+            <input type="number" id="donationAmount" placeholder="Enter Amount" min="1">
+            <button onclick="startPayment()">Proceed to Pay</button>
+        </div>
     </div>
 
     <h3>📜 Your Donation History</h3>
@@ -78,12 +81,13 @@
             <th>Date</th>
             <th>Amount</th>
             <th>Status</th>
-            <th>Action</th> </tr>
+            <th>Action</th> 
+        </tr>
         <% if (donations.length > 0) { %>
             <% donations.forEach(donation => { %>
                 <tr>
                     <td><%= donation.date.toDateString() %></td>
-                    <td>$<%= donation.amount %></td>
+                    <td>Rs. <%= donation.amount %></td>
                     
                     <td class="<%= donation.status %>">
                         <%= donation.status.toUpperCase() %>
@@ -106,5 +110,78 @@
             </tr>
         <% } %>
     </table>
+
+    <script>
+        async function startPayment() {
+            const amountInput = document.getElementById('donationAmount').value;
+
+            // Basic Validation
+            if (!amountInput || amountInput <= 0) {
+                alert("Please enter a valid amount.");
+                return;
+            }
+
+            try {
+                // 1. Fetch Secure Hash from Backend
+                const response = await fetch('/get-hash', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount: amountInput })
+                });
+
+                const data = await response.json();
+
+                if (!data.hash) {
+                    alert("Error communicating with server.");
+                    return;
+                }
+
+                // 2. Define Payment Object
+                var payment = {
+                    "sandbox": true,
+                    "merchant_id": data.merchant_id,
+                    "return_url": "http://localhost:3000/payment/success?order_id=" + data.order_id, 
+                    "cancel_url": "http://localhost:3000/dashboard",
+                    "notify_url": "http://localhost:3000/payment/notify", 
+                    "order_id": data.order_id,
+                    "items": "Charity Donation",
+                    "amount": amountInput, // Amount from input
+                    "currency": "LKR",
+                    "hash": data.hash, 
+                    "first_name": "<%= user.name %>",
+                    "last_name": "User",
+                    "email": "<%= user.email %>",
+                    "phone": "0771234567",
+                    "address": "No.1, Galle Road",
+                    "city": "Colombo",
+                    "country": "Sri Lanka"
+                };
+
+                // 3. Open PayHere Popup
+                payhere.startPayment(payment);
+
+            } catch (err) {
+                console.error("Error:", err);
+                alert("Something went wrong initializing payment.");
+            }
+        }
+
+        // --- Event Listeners ---
+        
+        payhere.onCompleted = function onCompleted(orderId) {
+            alert("Payment Completed! Order ID: " + orderId);
+            // Reload page to show the new success status in the table
+            window.location.reload(); 
+        };
+
+        payhere.onDismissed = function onDismissed() {
+            console.log("Payment dismissed");
+        };
+
+        payhere.onError = function onError(error) {
+            console.log("Error:" + error);
+            alert("Payment Error: " + error);
+        };
+    </script>
 </body>
 </html>

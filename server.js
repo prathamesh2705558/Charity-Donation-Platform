@@ -3,10 +3,16 @@ const express = require('express');
 const mongoose = require('mongoose');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
-const PDFDocument = require('pdfkit'); // 📄 1. Import PDFKit
+const PDFDocument = require('pdfkit'); 
+const md5 = require('md5'); // ⚡ Required for PayHere Security
+const path = require('path'); // <--- CRITICAL FIX 1: Import 'path' module
 const app = express();
 
 // --- 1. CONFIGURATION & MIDDLEWARE ---
+
+// 👇 PAYHERE CREDENTIALS
+const MERCHANT_ID = '1233636';       
+const MERCHANT_SECRET = 'MzIxMDk2MTE2MDM3NDU2ODkxMjYxNTc4NzgyOTY0MjA0NTMxODM='; 
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
@@ -16,8 +22,13 @@ mongoose.connect(process.env.MONGO_URI)
 // Set EJS as the templating engine
 app.set('view engine', 'ejs');
 
-// Allow the server to read data sent from HTML forms
+// Allow the server to read data sent from HTML forms & JSON
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json()); // ⚡ Required for reading JSON from frontend fetch
+
+// <--- CRITICAL FIX 2: Serve Static Files (Images/CSS)
+app.use(express.static(path.join(__dirname, 'public'))); 
+// ----------------------------------------------------
 
 // Set up Sessions
 app.use(session({
@@ -45,6 +56,7 @@ const donationSchema = new mongoose.Schema({
     amount: Number,
     status: { type: String, default: 'pending' }, 
     transactionId: String,
+    orderId: String, // Added to track PayHere Order ID
     date: { type: Date, default: Date.now }
 });
 const Donation = mongoose.model('Donation', donationSchema);
@@ -117,7 +129,7 @@ app.get('/logout', (req, res) => {
 });
 
 
-// --- USER FEATURES (DASHBOARD, DONATIONS & RECEIPTS) ---
+// --- USER FEATURES (DASHBOARD & PAYHERE PAYMENT) ---
 
 app.get('/dashboard', async (req, res) => {
     if (!req.session.userId) return res.redirect('/login');
@@ -129,47 +141,108 @@ app.get('/dashboard', async (req, res) => {
     res.render('dashboard', { user, donations });
 });
 
-app.post('/donate', async (req, res) => {
-    if (!req.session.userId) return res.redirect('/login');
+// ⚡ NEW: Generate Security Hash for PayHere (Called by Frontend)
+app.post('/get-hash', async (req, res) => {
+    if (!req.session.userId) return res.status(401).send("Unauthorized");
+
     const { amount } = req.body;
+    const orderId = "ORD-" + Date.now();
     
-    // Create PENDING donation
+    // 1. Format the amount (Must be like 1000.00)
+    let amountFormatted = parseFloat(amount).toLocaleString('en-us', {minimumFractionDigits: 2}).replaceAll(',', '');
+    const currency = 'LKR';
+
+    // 2. Hash the Secret (MD5 + Uppercase)
+    let hashedSecret = md5(MERCHANT_SECRET).toUpperCase();
+
+    // 3. Create the Final Hash: merchantID + orderID + amount + currency + hashedSecret
+    let hashString = MERCHANT_ID + orderId + amountFormatted + currency + hashedSecret;
+    let finalHash = md5(hashString).toUpperCase();
+
+    // 4. Save Pending Donation in DB (So we can track it later)
     const newDonation = new Donation({
         userId: req.session.userId,
         amount: amount,
         status: 'pending',
-        transactionId: 'TXN-' + Date.now()
+        transactionId: 'PENDING',
+        orderId: orderId
     });
     await newDonation.save();
-    
-    res.render('payment_gateway', { donationId: newDonation._id, amount });
+
+    res.json({ 
+        hash: finalHash,
+        order_id: orderId,
+        merchant_id: MERCHANT_ID
+    });
 });
 
-// Payment Callback
-app.post('/payment-callback', async (req, res) => {
-    const { donationId, status } = req.body;
+// ⚡ NEW: Payment Success Return URL
+app.get('/payment/success', async (req, res) => {
+    const { order_id } = req.query;
 
-    const donation = await Donation.findById(donationId).populate('userId');
-
-    if (donation.status === 'success') {
-        return res.send("Error: This donation has already been processed.");
+    if (order_id) {
+        // Fix for Localhost "Pending" issue
+        await Donation.findOneAndUpdate(
+            { orderId: order_id }, 
+            { status: 'success', transactionId: order_id }
+        );
+        
+        // 🔔 TRIGGER: Create Notification (with Rs.)
+        // We find the donation again to get the amount and user details
+        const donation = await Donation.findOne({ orderId: order_id }).populate('userId');
+        if(donation){
+             await new Notification({ 
+                message: `💰 New Donation: Rs. ${donation.amount} from ${donation.userId ? donation.userId.name : 'Donor'}`, 
+                type: 'success' 
+            }).save();
+        }
     }
-
-    donation.status = status;
-    await donation.save();
-
-    // 🔔 TRIGGER: Create Notification if payment success
-    if (status === 'success') {
-        await new Notification({ 
-            message: `💰 New Donation: $${donation.amount} from ${donation.userId.name}`, 
-            type: 'success' 
-        }).save();
-    }
-
     res.redirect('/dashboard');
 });
 
-// 📄 NEW: GENERATE RECEIPT PDF (USER)
+// ⚡ NEW: Payment Notify URL (Webhook)
+app.post('/payment/notify', async (req, res) => {
+    const {
+        merchant_id,
+        order_id,
+        payhere_amount,
+        payhere_currency,
+        status_code,
+        md5sig
+    } = req.body;
+
+    // Verify the signature
+    const localMd5sig = md5(
+        merchant_id + 
+        order_id + 
+        payhere_amount + 
+        payhere_currency + 
+        status_code + 
+        md5(MERCHANT_SECRET).toUpperCase()
+    ).toUpperCase();
+
+    if (localMd5sig === md5sig && status_code == 2) {
+        // Find donation by Order ID and update status
+        const donation = await Donation.findOne({ orderId: order_id }).populate('userId');
+        
+        if (donation) {
+            donation.status = 'success';
+            donation.transactionId = order_id; // Using OrderID as txn ID
+            await donation.save();
+
+            // 🔔 TRIGGER: Create Notification (UPDATED to Rs.)
+            await new Notification({ 
+                message: `💰 New Donation: Rs. ${donation.amount} from ${donation.userId ? donation.userId.name : 'Donor'}`, 
+                type: 'success' 
+            }).save();
+        }
+    }
+    
+    res.status(200).send('OK');
+});
+
+
+// 📄 GENERATE RECEIPT PDF (USER)
 app.get('/receipt/:id', async (req, res) => {
     if (!req.session.userId) return res.redirect('/login');
 
@@ -183,32 +256,26 @@ app.get('/receipt/:id', async (req, res) => {
 
         const doc = new PDFDocument({ size: 'A4', margin: 50 });
 
-        // Set headers so browser knows it's a PDF download
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=Receipt-${donation.transactionId}.pdf`);
 
         doc.pipe(res);
 
-        // --- PDF DESIGN ---
         doc.fontSize(20).text('OFFICIAL DONATION RECEIPT', { align: 'center' });
         doc.moveDown();
         doc.fontSize(10).text('---------------------------------------------------------', { align: 'center' });
         doc.moveDown();
-
         doc.fontSize(12).text(`Date: ${donation.date.toDateString()}`);
         doc.text(`Transaction ID: ${donation.transactionId}`);
         doc.moveDown();
-
         doc.fontSize(14).text(`Donor Name: ${donation.userId.name}`);
         doc.text(`Donor Email: ${donation.userId.email}`);
         doc.moveDown();
-
-        doc.fontSize(16).font('Helvetica-Bold').text(`Amount Donated: $${donation.amount}`, { align: 'center' });
-        
+        // UPDATED: Changed $ to Rs.
+        doc.fontSize(16).font('Helvetica-Bold').text(`Amount Donated: Rs. ${donation.amount}`, { align: 'center' });
         doc.moveDown(2);
         doc.fontSize(10).font('Helvetica').text('Thank you for supporting our cause!', { align: 'center' });
         doc.text('This is a computer-generated receipt.', { align: 'center' });
-
         doc.end();
 
     } catch (err) {
@@ -337,12 +404,13 @@ app.get('/admin/report-pdf', async (req, res) => {
     doc.text('--------------------------------------------------------------------------', { align: 'center' });
     doc.moveDown();
 
-    // Table Header (Manually positioned columns)
+    // Table Header
     let y = doc.y;
     doc.font('Helvetica-Bold').fontSize(10);
     doc.text('Date', 50, y);
     doc.text('Donor Name', 150, y);
-    doc.text('Amount ($)', 350, y);
+    // UPDATED: Changed $ to Rs.
+    doc.text('Amount (Rs.)', 350, y);
     doc.text('Status', 450, y);
     doc.moveDown();
 
@@ -350,13 +418,7 @@ app.get('/admin/report-pdf', async (req, res) => {
     doc.font('Helvetica').fontSize(10);
     donations.forEach(d => {
         y = doc.y;
-        
-        // Add new page if we are at the bottom
-        if(y > 700) { 
-            doc.addPage(); 
-            y = 50; 
-        } 
-
+        if(y > 700) { doc.addPage(); y = 50; } 
         const donorName = d.userId ? d.userId.name : 'Unknown';
         const dateStr = d.date.toISOString().split('T')[0];
 
@@ -364,20 +426,17 @@ app.get('/admin/report-pdf', async (req, res) => {
         doc.text(donorName, 150, y);
         doc.text(d.amount.toString(), 350, y);
         
-        // Color status text based on state
         if(d.status === 'success') doc.fillColor('green');
         else doc.fillColor('red');
         
         doc.text(d.status.toUpperCase(), 450, y);
-        
-        doc.fillColor('black'); // Reset color
-        doc.moveDown(0.5); // Add spacing between rows
+        doc.fillColor('black');
+        doc.moveDown(0.5);
     });
-
     doc.end();
 });
 
-// Export Users to CSV (Existing)
+// Export Users to CSV
 app.get('/admin/export', async (req, res) => {
     if (req.session.role !== 'admin') return res.send("Access Denied");
     const users = await User.find({});
